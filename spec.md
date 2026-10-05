@@ -67,10 +67,10 @@ Open app ──► Camera viewfinder (default screen)
 | ID | Requirement |
 |----|-------------|
 | F-1 | App launches directly into a full-screen camera viewfinder. |
-| F-2 | **Barcode first:** continuously scan for UPC/EAN barcodes in the frame. If one is found, identify the product without the user needing to tap. |
+| F-2 | **Barcode first:** ML Kit continuously scans for UPC/EAN barcodes in the frame; the scan screen prompts the user to scan the barcode first. A code must read the same on two frames in a row. UPC-E is expanded to UPC-A, and US EAN-13 codes become UPC-A. The barcode is looked up in UPCitemdb, then, if unknown, by a Google web search for the code (the name the result titles agree on). |
 | F-3 | **Image fallback:** if there is no readable barcode, the user taps the shutter and the photo goes to an image-recognition service to identify the product (brand, name, size/variant). |
 | F-4 | **Shelf price OCR:** read the shelf price tag in the frame using on-device text recognition. Pre-fill it as the "price here" value; the user can edit it. |
-| F-5 | If identification confidence is below a set threshold, show up to 3 candidate matches for the user to pick from, plus a manual text-search option. |
+| F-5 | The confirm screen states where the name came from: "Barcode matched", "matched by web search", "barcode not found", or "no barcode read" (name guessed from the label's largest print). A **Rescan** button returns to the camera when there's no barcode match. |
 | F-6 | Size and variant (e.g., 12 oz vs 16 oz) must match when comparing prices. When sizes differ, compare by **unit price** and label it clearly. |
 
 ### 4.2 Price Lookup
@@ -126,13 +126,13 @@ trip_cost  = fuel_cost + time_cost + wear_cost
 **Net savings (physical store)**
 
 ```
-net_savings = (price_here − price_B) × quantity − trip_cost
+net_savings = (price_here − price_B) − trip_cost
 ```
 
 **Net savings (online)**
 
 ```
-net_savings = (price_here − (price_online + shipping)) × quantity
+net_savings = price_here − (price_online + shipping)
 ```
 
 Online options are shown with their delivery date. They count toward a BYE verdict only if the user has turned on "Online OK" (default **on**).
@@ -146,11 +146,10 @@ Online options are shown with their delivery date. They count toward a BYE verdi
 | ID | Requirement |
 |----|-------------|
 | V-1 | Show the verdict in large text at the top of the result screen (BUY = green, BYE = amber/red). |
-| V-2 | Under the verdict, show the best alternative: store, price, distance, and net savings. |
+| V-2 | Under the verdict, show the best alternative: the listing's product photo and title (so the user can confirm it's the same item), store, price, distance, and net savings. |
 | V-3 | An expandable "Show the math" section lists the price difference, fuel cost, time cost, and net savings. |
-| V-4 | Show all other results in a compact list sorted by net savings. |
+| V-4 | Show all results in two tabs, **In store** and **Online**, each sorted by net savings. Every row shows the listing's product photo, retailer, listing title, and price. The screen opens on the tab with the best deal. |
 | V-5 | Tapping a physical store opens navigation (Google Maps intent). Tapping an online result opens the product page in the browser or retailer app. |
-| V-6 | A quantity stepper (default 1) recalculates the verdict instantly without new network calls. |
 
 ### 4.5 Settings
 
@@ -195,16 +194,19 @@ Settings live on a single, minimal screen:
 
 Retailer prices are public on Google Shopping, which already lists Walmart, Target, Amazon, Best Buy, and others for the same product in one place. The app does **not** scrape Google's HTML directly: Google blocks automated requests with CAPTCHAs within a few queries (especially from a phone's IP), the page markup changes often, and it breaks Google's terms. Instead the app uses **[SerpApi](https://serpapi.com)**, a service that runs these Google searches and returns the results as structured JSON. It handles proxies, CAPTCHAs, and parsing, and has a free tier (100–250 searches per month, depending on the plan) for development.
 
-Each check uses SerpApi in two ways:
+Each check uses SerpApi in three ways:
 
-1. **`engine=google_shopping`** with the product name and the user's city → a list of offers: retailer (`source`), `extracted_price`, delivery text, link.
-2. **`engine=google_maps`** for each of the top physical retailers → the nearest branch's coordinates. A retailer with a branch inside the search radius becomes an **in-store** option; otherwise it is treated as **online** (price + shipping).
+1. **`engine=google_shopping`** with the product name and the user's city → a list of offers: retailer (`source`), `extracted_price`, delivery text, link, photo.
+2. **`engine=google_immersive_product`** for the best-matching listing → Google's product page for that exact item, which groups identical products and lists every store selling it. Offers from this page are marked **Same product**, but only when the page confirms the size the user is looking for; a listing without a size can belong to another size's page.
+3. **`engine=google_maps`** for each of the top physical retailers → the nearest branch's coordinates. A retailer with a branch inside the search radius becomes an **in-store** option; otherwise it is treated as **online** (price + shipping). Third-party marketplace sellers (e.g. "Walmart - Seller Co") are always online.
+
+Google Shopping does **not** match barcode numbers (searching a UPC returns unrelated products), so the barcode is used to get the exact name, and every listing title is then checked against that name. A listing that conflicts on brand, size, pack count (e.g. "2x", "Pack of 3") or flavor/variant words (e.g. "Sour Cream", "Lightly Salted") is marked **May be a different item**, shows no savings, and never drives the verdict.
 
 Google Shopping shows each retailer's online price. For big chains this is usually the same as the shelf price, but not always, so in-store results are labeled "online price; may vary in store."
 
 All price sources sit behind a `PriceProvider` interface, so SerpApi can be swapped for a similar service (Serper.dev, SearchApi.io) or a backend proxy without changing the rest of the app.
 
-**Cost per scan:** 1 shopping search + up to 4 store lookups (store locations are cached per retailer for the session).
+**Cost per scan:** 1 shopping search + 1 product page + up to 4 store lookups (store locations are cached per retailer for the session), plus 1 web search when UPCitemdb doesn't know a barcode.
 
 ### 6.2 Other sources
 
@@ -212,7 +214,7 @@ All price sources sit behind a `PriceProvider` interface, so SerpApi can be swap
 |------|----------------|----------|
 | Barcode scanning | Google ML Kit Barcode Scanning (on-device) | — |
 | Shelf price + label text | Google ML Kit Text Recognition (on-device) | Manual entry |
-| UPC → product name | UPCitemdb (free trial endpoint, no key, ~100/day) | Raw UPC as the search query |
+| UPC → product name | UPCitemdb (free trial endpoint, no key, ~100/day) | Google web search for the code via SerpApi |
 | No barcode | Use label text read by OCR as an editable search query | Manual text search |
 | Retail prices | SerpApi Google Shopping (§6.1) | — |
 | Store locations | SerpApi Google Maps (§6.1) | — |
@@ -244,7 +246,7 @@ The Google Maps Platform key (gas + routes) is **optional**. With only a SerpApi
 └──────────────────────────┘                     └───────────────────────────────┘
 ```
 
-- The **verdict engine runs on the device**, so changing settings or quantity recalculates instantly without network calls.
+- The **verdict engine runs on the device**, so changing settings recalculates instantly without network calls.
 - The **backend** holds API keys, fans out retailer requests in parallel, normalizes results, and caches them.
 
 ### 7.2 Android Tech Stack
@@ -350,7 +352,7 @@ data class Verdict(
    - A subtle overlay frame; a barcode highlight appears when one is detected.
 
 2. **Confirm** (shown only when needed)
-   - Product thumbnail + name. Editable "Price here: $__.__".
+   - The user's photo of the product stays visible (shrinking when the keyboard opens) while they edit the name and "Price here: $__.__".
    - "Check prices" button.
 
 3. **Verdict**
@@ -358,7 +360,9 @@ data class Verdict(
    ┌─────────────────────────────┐
    │            BYE              │  ← large, colored, with icon
    │  Save $6.40 at Walmart      │
-   │  3.2 mi · 8 min             │
+   │ ┌───┐ Brand Product 16 oz   │  ← listing photo + title
+   │ │img│ Walmart $8.99 · 3.2 mi│
+   │ └───┘                       │
    │  [ Navigate ]               │
    ├─────────────────────────────┤
    │  ▸ Show the math            │
@@ -367,11 +371,11 @@ data class Verdict(
    │    Time (16 min)     $1.80  │
    │    Net savings       $6.40  │
    ├─────────────────────────────┤
-   │  Qty  [-] 1 [+]             │
-   ├─────────────────────────────┤
-   │  Target     $14.49  +$2.10  │
-   │  Amazon     $14.99  Thu     │
-   │  Here       $17.99          │
+   │  Price here         $17.99  │
+   │  [ In store (3) | Online (5) ]
+   │  [img] Walmart       $8.99  │
+   │        Brand Product 16 oz  │
+   │  [img] Target       $14.49  │
    └─────────────────────────────┘
    ```
 

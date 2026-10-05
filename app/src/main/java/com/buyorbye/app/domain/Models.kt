@@ -31,6 +31,9 @@ data class PriceResult(
     val store: StoreLocation? = null,
     val link: String? = null,
     val thumbnail: String? = null,
+    val match: MatchLevel = MatchLevel.LIKELY,
+    /** Third-party marketplace seller (e.g. on Walmart.com); such offers are never in-store. */
+    val seller: String? = null,
 )
 
 /** Drive distance/time for one leg. */

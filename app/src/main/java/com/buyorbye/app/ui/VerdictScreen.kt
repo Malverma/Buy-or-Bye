@@ -23,41 +23,44 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.automirrored.outlined.TrendingFlat
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.material.icons.automirrored.outlined.TrendingFlat
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.buyorbye.app.domain.Channel
 import com.buyorbye.app.domain.Decision
+import com.buyorbye.app.domain.MatchLevel
 import com.buyorbye.app.domain.Option
 import com.buyorbye.app.domain.Verdict
 import java.util.Locale
@@ -95,13 +98,17 @@ private fun Centered(content: @Composable () -> Unit) {
 @Composable
 private fun Ready(vm: MainViewModel, data: CheckData) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val qty by vm.quantity.collectAsStateWithLifecycle()
-    val verdict = remember(data, settings, qty) { vm.verdict(data, settings, qty) }
-    val params = remember(data, settings, qty) { vm.params(data, settings, qty) }
+    val verdict = remember(data, settings) { vm.verdict(data, settings) }
+    val params = remember(data, settings) { vm.params(data, settings) }
     val context = LocalContext.current
     var showMath by remember { mutableStateOf(false) }
     val best = verdict.best
     val color = if (verdict.decision == Decision.BUY) BuyGreen else ByeAmber
+
+    val inStore = verdict.options.filter { it.result.channel == Channel.IN_STORE }
+    val online = verdict.options.filter { it.result.channel == Channel.ONLINE }
+    // Open on the tab holding the best deal.
+    var tab by rememberSaveable(data) { mutableStateOf(if (best?.result?.channel == Channel.ONLINE) 1 else 0) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
@@ -133,7 +140,26 @@ private fun Ready(vm: MainViewModel, data: CheckData) {
             )
         }
         Text(headline(verdict, data, settings.minSavings), style = MaterialTheme.typography.titleLarge)
-        if (best != null) Text(subline(best), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        if (best != null) {
+            // Show the matched listing's photo and title so the user can confirm it's the same product.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Thumbnail(best.result.thumbnail, 72.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(best.result.title, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    MatchBadge(best.result.match)
+                    Spacer(Modifier.height(4.dp))
+                    Text(subline(best), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
 
         if (verdict.decision == Decision.BYE && best != null) {
             Button(
@@ -154,7 +180,7 @@ private fun Ready(vm: MainViewModel, data: CheckData) {
             }
             AnimatedVisibility(showMath) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MathRow("Price difference${if (qty > 1) " × $qty" else ""}", money((data.priceHere - best.result.price) * qty))
+                    MathRow("Price difference", money(data.priceHere - best.result.price))
                     best.trip?.let { t ->
                         MathRow(
                             "Gas (${miles(t.extraMiles)} @ ${money(params.gasPrice)}/gal, ${fmt(params.mpg)} mpg)",
@@ -176,24 +202,26 @@ private fun Ready(vm: MainViewModel, data: CheckData) {
         }
 
         HorizontalDivider()
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Quantity", modifier = Modifier.weight(1f))
-            IconButton(onClick = { vm.setQuantity(qty - 1) }, enabled = qty > 1) {
-                Icon(Icons.Outlined.Remove, contentDescription = "Fewer")
-            }
-            Text("$qty", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(32.dp), textAlign = TextAlign.Center)
-            IconButton(onClick = { vm.setQuantity(qty + 1) }) {
-                Icon(Icons.Outlined.Add, contentDescription = "More")
-            }
+        Row(Modifier.fillMaxWidth()) {
+            Text("Price here", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text(money(data.priceHere), fontWeight = FontWeight.SemiBold)
         }
-        HorizontalDivider()
 
-        // All offers, best first, plus the price here for reference.
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            verdict.options.forEach { OptionRow(it, onClick = { openOption(context, it) }) }
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                Text("Here", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                Text(money(data.priceHere))
+        TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("In store (${inStore.size})") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Online (${online.size})") })
+        }
+        val shown = if (tab == 0) inStore else online
+        if (shown.isEmpty()) {
+            Text(
+                if (tab == 0) "No nearby stores found within ${fmt(settings.radiusMiles)} mi."
+                else "No online offers found.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 16.dp),
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                shown.forEach { OptionRow(it, onClick = { openOption(context, it) }) }
             }
         }
 
@@ -203,18 +231,38 @@ private fun Ready(vm: MainViewModel, data: CheckData) {
 }
 
 @Composable
+private fun Thumbnail(url: String?, size: Dp) {
+    val shape = RoundedCornerShape(8.dp)
+    // White backing: product shots are usually on white and read poorly on the dark theme otherwise.
+    Box(Modifier.size(size).clip(shape).background(Color.White)) {
+        if (url != null) {
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun OptionRow(o: Option, onClick: () -> Unit) {
     val r = o.result
     Row(
-        Modifier.fillMaxWidth().clip8().clickable(onClick = onClick).padding(vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Thumbnail(r.thumbnail, 56.dp)
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(r.retailer, fontWeight = FontWeight.SemiBold)
+            Text(r.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            MatchBadge(r.match)
             Text(
                 when (r.channel) {
                     Channel.IN_STORE -> listOfNotNull(o.driveMiles?.let(::miles), o.driveMinutes?.let(::minutes)).joinToString(" · ")
-                    Channel.ONLINE -> "Online" + (r.deliveryText?.let { " · $it" } ?: "")
+                    Channel.ONLINE -> listOfNotNull(r.seller?.let { "Sold by $it" }, r.deliveryText ?: "Online").joinToString(" · ")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -222,15 +270,29 @@ private fun OptionRow(o: Option, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
-            Text(money(r.price))
-            Text(
-                (if (o.netSavings >= 0) "saves " else "costs ") + money(kotlin.math.abs(o.netSavings)),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (o.netSavings > 0) BuyGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(money(r.price), fontWeight = FontWeight.SemiBold)
+            // Savings against a different item would be misleading, so it's left off.
+            if (r.match != MatchLevel.DIFFERENT) {
+                Text(
+                    (if (o.netSavings >= 0) "saves " else "costs ") + money(kotlin.math.abs(o.netSavings)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (o.netSavings > 0) BuyGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun MatchBadge(match: MatchLevel) {
+    val (text, color) = when (match) {
+        MatchLevel.EXACT -> "✓ Same product" to BuyGreen
+        MatchLevel.DIFFERENT -> "May be a different item" to ByeAmber
+        MatchLevel.LIKELY -> return
+    }
+    Text(text, style = MaterialTheme.typography.labelSmall, color = color, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
@@ -240,6 +302,9 @@ private fun Notes(data: CheckData, verdict: Verdict) {
         if (data.gas.estimated) add("Gas price ${money(data.gas.pricePerGallon)}/gal is from your settings (no live price available).")
         else add("Gas ${money(data.gas.pricePerGallon)}/gal from ${data.gas.source}.")
         if (data.routesEstimated) add("Drive distances are estimates.")
+        if (verdict.options.any { it.result.match == MatchLevel.DIFFERENT }) {
+            add("Items marked \"May be a different item\" differ in brand, size, pack, or flavor and don't count toward the verdict.")
+        }
         if (verdict.options.any { it.result.channel == Channel.IN_STORE }) {
             add("Store prices are each retailer's online price and may vary in store.")
         }
@@ -274,12 +339,12 @@ private fun headline(v: Verdict, data: CheckData, minSavings: Double): String {
 
 private fun subline(o: Option): String = when (o.result.channel) {
     Channel.IN_STORE -> listOfNotNull(
-        money(o.result.price),
+        "${o.result.retailer} ${money(o.result.price)}",
         o.driveMiles?.let(::miles),
         o.driveMinutes?.let(::minutes),
         o.result.store?.address,
     ).joinToString(" · ")
-    Channel.ONLINE -> listOfNotNull(money(o.result.price), "online", o.result.deliveryText).joinToString(" · ")
+    Channel.ONLINE -> listOfNotNull("${o.result.retailer} ${money(o.result.price)}", "online", o.result.deliveryText).joinToString(" · ")
 }
 
 private fun openOption(context: Context, o: Option) {
@@ -296,5 +361,3 @@ private fun openOption(context: Context, o: Option) {
 }
 
 private fun fmt(d: Double) = if (d % 1.0 == 0.0) "%.0f".format(Locale.US, d) else "%.1f".format(Locale.US, d)
-
-private fun Modifier.clip8() = this.then(Modifier.clip(RoundedCornerShape(8.dp)))

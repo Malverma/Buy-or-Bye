@@ -53,9 +53,14 @@ object VerdictEngine {
                     driveMinutes = null,
                 )
             }
-        }.sortedByDescending { it.netSavings }
+        }.sortedWith(
+            // Likely-different items sink to the bottom; they're shown for reference only.
+            compareBy<Option> { it.result.match == MatchLevel.DIFFERENT }.thenByDescending { it.netSavings },
+        )
 
-        val best = options.firstOrNull { p.includeOnline || it.result.channel == Channel.IN_STORE }
+        val best = options.firstOrNull {
+            it.result.match != MatchLevel.DIFFERENT && (p.includeOnline || it.result.channel == Channel.IN_STORE)
+        }
         val decision = if (best != null && best.netSavings >= p.minSavings) Decision.BYE else Decision.BUY
         return Verdict(decision, best, options)
     }

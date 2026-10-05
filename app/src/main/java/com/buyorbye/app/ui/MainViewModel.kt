@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.buyorbye.app.BuyOrByeApp
 import com.buyorbye.app.data.GasPrice
 import com.buyorbye.app.data.HistoryItem
+import com.buyorbye.app.data.NameFrom
 import com.buyorbye.app.data.PriceSearch
 import com.buyorbye.app.data.ScanResult
 import com.buyorbye.app.data.Settings
@@ -33,14 +34,32 @@ import kotlinx.coroutines.launch
 
 enum class Screen { Scan, Confirm, Verdict, Settings, History }
 
+enum class BarcodeStatus {
+    /** No barcode was read. */
+    NONE,
+    LOOKING_UP,
+
+    /** Name came from the product database. */
+    MATCHED,
+
+    /** Name came from a web search for the code; less reliable. */
+    MATCHED_BY_WEB,
+
+    /** Barcode read, but no source knew it. */
+    NOT_FOUND,
+}
+
 data class ConfirmState(
     val query: String,
     val upc: String? = null,
+    val brand: String? = null,
     val priceText: String = "",
     val imageUrl: String? = null,
-    val identifying: Boolean = false,
+    val barcode: BarcodeStatus = BarcodeStatus.NONE,
     /** The user's own photo from the scan; null for manual search and history re-runs. */
     val photo: Bitmap? = null,
+    /** True while [query] is still the unedited guess read off the label. */
+    val guessedFromLabel: Boolean = false,
 )
 
 data class CheckData(
@@ -71,9 +90,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _check = MutableStateFlow<CheckState>(CheckState.Idle)
     val check: StateFlow<CheckState> = _check.asStateFlow()
 
-    private val _quantity = MutableStateFlow(1)
-    val quantity: StateFlow<Int> = _quantity.asStateFlow()
-
     val settings: StateFlow<Settings> = c.settings.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
     val history: StateFlow<List<HistoryItem>> = c.settings.history
@@ -100,24 +116,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onScanned(result: ScanResult) {
+        val guess = result.queryGuess()
         _confirm.value = ConfirmState(
-            query = result.queryGuess().ifBlank { result.upc.orEmpty() },
+            query = guess,
+            guessedFromLabel = guess.isNotBlank(),
             upc = result.upc,
             priceText = result.shelfPrice?.let { "%.2f".format(it) }.orEmpty(),
-            identifying = result.upc != null,
+            barcode = if (result.upc != null) BarcodeStatus.LOOKING_UP else BarcodeStatus.NONE,
             photo = result.photo,
         )
         _screen.value = Screen.Confirm
         val upc = result.upc ?: return
         lookupJob?.cancel()
         lookupJob = viewModelScope.launch {
-            val product = c.products.byUpc(upc)
+            val found = c.products.byUpc(upc)
             _confirm.update { cur ->
-                cur?.copy(
-                    query = product?.query ?: cur.query,
-                    imageUrl = product?.imageUrl,
-                    identifying = false,
-                )
+                cur ?: return@update null
+                if (found == null) {
+                    cur.copy(barcode = BarcodeStatus.NOT_FOUND)
+                } else {
+                    cur.copy(
+                        query = found.product.query,
+                        brand = found.product.brand,
+                        imageUrl = found.product.imageUrl,
+                        guessedFromLabel = false,
+                        barcode = when (found.from) {
+                            NameFrom.PRODUCT_DATABASE -> BarcodeStatus.MATCHED
+                            NameFrom.WEB_SEARCH -> BarcodeStatus.MATCHED_BY_WEB
+                        },
+                    )
+                }
             }
         }
     }
@@ -129,19 +157,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun editConfirm(query: String? = null, priceText: String? = null) {
-        _confirm.update { it?.copy(query = query ?: it.query, priceText = priceText ?: it.priceText) }
-    }
-
-    fun setQuantity(q: Int) {
-        _quantity.value = q.coerceIn(1, 99)
+        _confirm.update {
+            it?.copy(
+                query = query ?: it.query,
+                priceText = priceText ?: it.priceText,
+                guessedFromLabel = it.guessedFromLabel && query == null,
+            )
+        }
     }
 
     fun runCheck() {
         val cs = _confirm.value ?: return
         val priceHere = cs.priceText.replace("$", "").trim().toDoubleOrNull() ?: return
         val query = cs.query.trim().ifEmpty { return }
+        val product = Product(query = query, upc = cs.upc, brand = cs.brand, imageUrl = cs.imageUrl)
         lookupJob?.cancel()
-        _quantity.value = 1
         _screen.value = Screen.Verdict
 
         checkJob?.cancel()
@@ -158,7 +188,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
                 _check.value = CheckState.Loading("Checking prices…")
                 val gasJob = async { resolveGas(s, here) }
-                val search = c.prices.search(query, here, city, s.radiusMiles)
+                val search = c.prices.search(product, here, city, s.radiusMiles)
 
                 val inStore = search.results.filter { it.channel == Channel.IN_STORE && it.store != null }
                 val detours = if (here != null && inStore.isNotEmpty()) {
@@ -168,7 +198,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val byResult = inStore.mapNotNull { r -> detours?.byStore?.get(r.store!!.location)?.let { r to it } }.toMap()
 
                 val data = CheckData(
-                    product = Product(query = query, upc = cs.upc, imageUrl = cs.imageUrl),
+                    product = product,
                     priceHere = priceHere,
                     search = search,
                     detours = byResult,
@@ -185,12 +215,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun verdict(data: CheckData, s: Settings, qty: Int): Verdict =
-        VerdictEngine.decide(data.search.results, data.detours, params(data, s, qty))
+    fun verdict(data: CheckData, s: Settings): Verdict =
+        VerdictEngine.decide(data.search.results, data.detours, params(data, s))
 
-    fun params(data: CheckData, s: Settings, qty: Int) = VerdictParams(
+    fun params(data: CheckData, s: Settings) = VerdictParams(
         priceHere = data.priceHere,
-        quantity = qty,
+        quantity = 1,
         gasPrice = data.gas.pricePerGallon,
         mpg = s.mpg,
         valueOfTimePerHour = s.valueOfTimePerHour,
@@ -200,7 +230,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     fun rerun(item: HistoryItem) {
-        _confirm.value = ConfirmState(query = item.query, upc = item.upc, priceText = "%.2f".format(item.priceHere))
+        _confirm.value = ConfirmState(
+            query = item.query,
+            upc = item.upc,
+            priceText = "%.2f".format(item.priceHere),
+            barcode = if (item.upc != null) BarcodeStatus.MATCHED else BarcodeStatus.NONE,
+        )
         runCheck()
     }
 
@@ -232,7 +267,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun recordHistory(data: CheckData) {
         val s = settings.first()
-        val v = verdict(data, s, 1)
+        val v = verdict(data, s)
         c.settings.addHistory(
             HistoryItem(
                 query = data.product.query,

@@ -95,3 +95,20 @@ class VerdictEngineTest {
         assertEquals(0.0, trip.fuelCost, 1e-9)
     }
 }
+
+class VerdictEngineMatchTest {
+    private val params = VerdictParams(
+        priceHere = 5.0, quantity = 1, gasPrice = 3.0, mpg = 30.0, valueOfTimePerHour = 0.0,
+        wearPerMile = 0.0, minSavings = 1.0, includeOnline = true,
+    )
+
+    @Test
+    fun differentItemsNeverDriveTheVerdict() {
+        val wrongFlavor = PriceResult("A", "Sour Cream", Channel.ONLINE, 1.0, shipping = 0.0, match = MatchLevel.DIFFERENT)
+        val same = PriceResult("B", "Original", Channel.ONLINE, 4.5, shipping = 0.0, match = MatchLevel.EXACT)
+        val v = VerdictEngine.decide(listOf(wrongFlavor, same), emptyMap(), params)
+        assertEquals("B", v.best!!.result.retailer)
+        assertEquals(Decision.BUY, v.decision) // saves only $0.50
+        assertEquals("A", v.options.last().result.retailer)
+    }
+}

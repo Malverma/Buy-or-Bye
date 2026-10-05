@@ -9,7 +9,7 @@ class AppContainer(context: Context) {
     val settings = SettingsStore(context)
     val location = LocationProvider(context)
     val scanner = Scanner()
-    val products = ProductLookup(http)
+    val products = ProductLookup(http, BuildConfig.SERPAPI_KEY)
     val prices: PriceProvider = SerpApiPriceProvider(http, BuildConfig.SERPAPI_KEY)
     val gas = GasPriceProvider(http, BuildConfig.MAPS_API_KEY)
     val routes = RouteProvider(http, BuildConfig.MAPS_API_KEY)

@@ -4,6 +4,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,11 +17,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -75,19 +82,10 @@ fun ConfirmScreen(vm: MainViewModel) {
             onValueChange = { vm.editConfirm(query = it) },
             label = { Text("Product") },
             placeholder = { Text("e.g. Pringles Original 5.2 oz") },
-            supportingText = {
-                when {
-                    cs.identifying -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
-                        Text("  Looking up barcode ${cs.upc}…")
-                    }
-                    cs.upc != null -> Text("Barcode ${cs.upc}. Include the size for the best match.")
-                    else -> Text("Include brand and size for the best match.")
-                }
-            },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
+        BarcodeStatusRow(cs, onRescan = vm::back)
 
         OutlinedTextField(
             value = cs.priceText,
@@ -108,5 +106,38 @@ fun ConfirmScreen(vm: MainViewModel) {
         ) {
             Text("Check prices", style = MaterialTheme.typography.titleMedium)
         }
+    }
+}
+
+/** Says where the product name came from, so the user knows how much to trust it. */
+@Composable
+private fun BarcodeStatusRow(cs: ConfirmState, onRescan: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val (icon, tint, message) = when (cs.barcode) {
+        BarcodeStatus.LOOKING_UP -> Triple(null, muted, "Looking up barcode ${cs.upc}…")
+        BarcodeStatus.MATCHED -> Triple(Icons.Outlined.CheckCircle, BuyGreen, "Barcode matched")
+        BarcodeStatus.MATCHED_BY_WEB ->
+            Triple(Icons.Outlined.CheckCircle, BuyGreen, "Barcode matched by web search. Check the name.")
+        BarcodeStatus.NOT_FOUND -> Triple(
+            Icons.Outlined.ErrorOutline,
+            ByeAmber,
+            "Barcode ${cs.upc} not found." + if (cs.guessedFromLabel) " Name guessed from the label, check it." else " Type the name.",
+        )
+        BarcodeStatus.NONE -> Triple(
+            Icons.Outlined.ErrorOutline,
+            ByeAmber,
+            if (cs.guessedFromLabel) "No barcode read. Name guessed from the label, check it." else "No barcode read. Type the name.",
+        )
+    }
+    val canRescan = cs.barcode == BarcodeStatus.NONE || cs.barcode == BarcodeStatus.NOT_FOUND
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (icon == null) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(message, style = MaterialTheme.typography.bodySmall, color = muted, modifier = Modifier.weight(1f))
+        if (canRescan) TextButton(onClick = onRescan) { Text("Rescan") }
     }
 }

@@ -21,8 +21,8 @@ android {
         applicationId = "com.buyorbye.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         buildConfigField("String", "SERPAPI_KEY", "\"${localKey("SERPAPI_KEY")}\"")
         buildConfigField("String", "MAPS_API_KEY", "\"${localKey("MAPS_API_KEY")}\"")

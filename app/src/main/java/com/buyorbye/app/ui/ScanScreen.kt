@@ -189,9 +189,10 @@ private fun CameraCapture(scanner: Scanner, onResult: (ScanResult) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (barcodeSeen) "Barcode found…" else "Fit the product and its price tag in the frame",
+                if (barcodeSeen) "Barcode found…" else "Scan the barcode first.\nNo barcode? Snap the label and price tag.",
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
             )
             Spacer(Modifier.height(20.dp))
