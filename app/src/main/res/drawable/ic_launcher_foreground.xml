@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Price tag split into a green check (buy) and amber cross (bye) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF3DDC84"
+        android:pathData="M30,40 L54,40 L54,72 L30,72 Z" />
+    <path
+        android:fillColor="#FFFFB020"
+        android:pathData="M54,40 L70,40 L80,56 L70,72 L54,72 Z" />
+    <path
+        android:fillColor="#FF111111"
+        android:pathData="M35,56 L39,52 L43,56 L50,48 L54,52 L43,63 Z" />
+    <path
+        android:fillColor="#FF111111"
+        android:pathData="M58,50 L60,48 L64,52 L68,48 L70,50 L66,54 L70,58 L68,60 L64,56 L60,60 L58,58 L62,54 Z" />
+</vector>
